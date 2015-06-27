@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"math"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,18 +159,52 @@ func TestRejectFutureCommand(t *testing.T) {
 // TestTxnPutOutOfOrder tests a case where a put operation of an older
 // timestamp comes after a put operation of a newer timestamp in a txn.
 //
+// The test uses "Writer" and "Reader" to reproduce an out-of-order
+// put. Writer executes a put operation in a txn and commits
+// it. Reader executes two get operations on the same key with higher
+// priority (outside of a txn). An out-of-order put when Writer's txn
+// is restarted in the following way:
+//
 // 1) Writer executes a put operation with time T in a txn.
-// 2) Before the txn is committed, Reader sends a get
-//    operation with time T+100. This triggers the txn restart.
-// 3) Reader sends another get operation with time T+200. The
-//    write intent is resolved (and the txn timestamp is pushed to
-//    T+200), but the actual get operation has not yet been executed (and
-//    hence the timestamp cache has not been updated).
-// 4) Writer restarts the txn and executes the put operation
-//    again. The timestamp of the operation is T+100, which is earlier
-//    than the timestamp pushed at Step 3 (= T+200).
+// 2) Before the writer's txn is committed, Reader sends a get
+//    operation with time T+100. This triggers the restart of
+//    Writer's txn.
+// 3) Before Writer starts a new epoch of the txn, Reader sends
+//    another get operation with time T+200. The write intent is resolved
+//    (and the txn timestamp is pushed again to T+200). The actual get
+//    operation has not yet been executed (and hence the timestamp cache
+//    has not been updated).
+// 4) Writer restarts its txn and executes the put operation
+//    again. This put operation becomes out-of-order since its
+//    timestamp is T+100 while the txn timestamp pushed at Step 3 is T+200.
 func TestTxnPutOutOfOrder(t *testing.T) {
 	defer leaktest.AfterTest(t)
+
+	key := "key"
+
+	// Set up a filter to so that the get operation at Step 3 will return an error (simulating
+	// artificial delay).
+	var numGets int32
+	numGets = 0
+	storage.TestingCommandFilter = func(args proto.Request, reply proto.Response) bool {
+		if _, ok := args.(*proto.GetRequest); ok &&
+			args.Header().Key.Equal(proto.Key(key)) &&
+			args.Header().Txn == nil {
+			// Reader executes two get operations, each of which triggers two get requests
+			// (the first request fails and triggers txn push, and then the second request
+			// succeeds). Returns an error for the fourth get request to add delay after
+			// the second get operation pushes the txn and resolves the write intent.
+			if atomic.AddInt32(&numGets, 1) == 4 {
+				reply.Header().SetGoError(util.Errorf("Test"))
+				return true
+			}
+		}
+		return false
+	}
+	defer func() {
+		storage.TestingCommandFilter = nil
+	}()
+
 	manualClock := hlc.NewManualClock(0)
 	clock := hlc.NewClock(manualClock.UnixNano)
 	store, stopper := createTestStoreWithEngine(t,
@@ -180,7 +215,6 @@ func TestTxnPutOutOfOrder(t *testing.T) {
 	defer stopper.Stop()
 
 	// Put an initial value.
-	key := "key"
 	initVal := []byte("initVal")
 	err := store.DB().Put(key, initVal)
 	if err != nil {
@@ -193,7 +227,7 @@ func TestTxnPutOutOfOrder(t *testing.T) {
 	waitSecondGet := make(chan struct{})
 	waitTxnComplete := make(chan struct{})
 
-	// Start a writer.
+	// Start Writer.
 	go func() {
 		epoch := -1
 		// Start a txn that does read-after-write.
@@ -213,6 +247,7 @@ func TestTxnPutOutOfOrder(t *testing.T) {
 				return err
 			}
 
+			// Make sure a get will return the value that was just written.
 			actual, err := txn.Get(key)
 			if err != nil {
 				return err
@@ -242,6 +277,8 @@ func TestTxnPutOutOfOrder(t *testing.T) {
 	}()
 
 	<-waitPut
+
+	// Start Reader.
 
 	// Advance the clock and send a get operation with higher
 	// priority to trigger the txn restart.
@@ -283,23 +320,6 @@ func TestTxnPutOutOfOrder(t *testing.T) {
 		},
 		Reply: &proto.GetResponse{},
 	}
-
-	numGets := 0
-	storage.TestingCommandFilter = func(args proto.Request, reply proto.Response) bool {
-		if _, ok := args.(*proto.GetRequest); ok && args.Header().Key.Equal(proto.Key(key)) {
-			// The first attempt will fail and the write intent will be resolved.
-			// Do not run the get operation after the intent is resolved.
-			numGets++
-			if numGets == 2 {
-				reply.Header().SetGoError(util.Errorf("Test"))
-				return true
-			}
-		}
-		return false
-	}
-	defer func() {
-		storage.TestingCommandFilter = nil
-	}()
 
 	err = store.ExecuteCmd(context.Background(), getCall)
 	if err == nil {
