@@ -42,7 +42,7 @@ func PromptForPassword() ([]byte, error) {
 	// Use a raw terminal.
 	oldState, err := terminal.MakeRaw(0)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer terminal.Restore(0, oldState)
 
