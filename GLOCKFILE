@@ -34,4 +34,5 @@ github.com/spf13/cobra 66816bcd0378e248c613e3c443c020f544c28804
 github.com/spf13/pflag 67cbc198fd11dab704b214c1e629a97af392c085
 golang.org/x/net af03a19e5e18af95235c84e92e6670fdeb0b220a
 golang.org/x/tools f671283c2250b23f313e8045102573e526a9beb2
+golang.org/x/crypto cc04154d65fb9296747569b107cfd05380b1ea3e
 gopkg.in/yaml.v1 9f9df34309c04878acc86042b16630b0f696e1de
