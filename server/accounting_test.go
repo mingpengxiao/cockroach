@@ -32,14 +32,13 @@ import (
 
 const testAcctConfig = `cluster_id: test`
 
+var testAcctConfigBytes = []byte(testAcctConfig)
+
 // ExampleSetAndGetAccts sets acct configs for a variety of key
 // prefixes and verifies they can be fetched directly.
 func ExampleSetAndGetAccts() {
 	_, stopper := startAdminServer()
 	defer stopper.Stop()
-
-	testConfigFn := createTestConfigFile(testAcctConfig)
-	defer util.CleanupDir(testConfigFn)
 
 	testData := []struct {
 		prefix proto.Key
@@ -53,7 +52,7 @@ func ExampleSetAndGetAccts() {
 
 	for _, test := range testData {
 		prefix := url.QueryEscape(string(test.prefix))
-		RunSetAcct(testContext, prefix, testConfigFn)
+		RunSetAcct(testContext, prefix, testAcctConfigBytes)
 		RunGetAcct(testContext, prefix)
 	}
 	// Output:
@@ -81,9 +80,6 @@ func ExampleLsAccts() {
 	_, stopper := startAdminServer()
 	defer stopper.Stop()
 
-	testConfigFn := createTestConfigFile(testAcctConfig)
-	defer util.CleanupDir(testConfigFn)
-
 	keys := []proto.Key{
 		proto.KeyMin,
 		proto.Key("db1"),
@@ -100,7 +96,7 @@ func ExampleLsAccts() {
 
 	for _, key := range keys {
 		prefix := url.QueryEscape(string(key))
-		RunSetAcct(testContext, prefix, testConfigFn)
+		RunSetAcct(testContext, prefix, testAcctConfigBytes)
 	}
 
 	for i, regexp := range regexps {
@@ -140,9 +136,6 @@ func ExampleRmAccts() {
 	_, stopper := startAdminServer()
 	defer stopper.Stop()
 
-	testConfigFn := createTestConfigFile(testAcctConfig)
-	defer util.CleanupDir(testConfigFn)
-
 	keys := []proto.Key{
 		proto.KeyMin,
 		proto.Key("db1"),
@@ -150,7 +143,7 @@ func ExampleRmAccts() {
 
 	for _, key := range keys {
 		prefix := url.QueryEscape(string(key))
-		RunSetAcct(testContext, prefix, testConfigFn)
+		RunSetAcct(testContext, prefix, testAcctConfigBytes)
 	}
 
 	for _, key := range keys {
@@ -175,7 +168,7 @@ func ExampleAcctContentTypes() {
 	defer stopper.Stop()
 
 	config := &proto.AcctConfig{}
-	err := yaml.Unmarshal([]byte(testAcctConfig), config)
+	err := yaml.Unmarshal(testAcctConfigBytes, config)
 	if err != nil {
 		fmt.Println(err)
 	}
